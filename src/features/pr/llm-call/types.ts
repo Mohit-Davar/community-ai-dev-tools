@@ -14,9 +14,11 @@ export const ReviewSchema = z.object({
     .describe(
       "The specific line number in the newly added code where the vulnerability exists."
     ),
-  problem: z.string().describe(
-    "A detailed explanation of the security vulnerability, the technical risk it introduces, and how it could be exploited."
-  ),
+  problem: z
+    .string()
+    .describe(
+      "A detailed explanation of the security vulnerability, the technical risk it introduces, and how it could be exploited."
+    ),
   prompt: z
     .string()
     .describe(

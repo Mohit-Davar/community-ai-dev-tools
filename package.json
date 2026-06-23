@@ -4,12 +4,14 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target=node --outdir=dist",
     "lint": "eslint .",
+    "format": "prettier --write .",
     "fix": "eslint . --fix && prettier --write .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "lint-staged": {
     "*.ts": [
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/bun": "latest",
+    "@vitest/coverage-v8": "^4.1.9",
     "eslint": "^9.39.2",
     "eslint-plugin-perfectionist": "^5.9.0",
     "eslint-plugin-simple-import-sort": "^13.0.0",
@@ -28,8 +31,10 @@
     "husky": "^9.1.7",
     "jiti": "^2.6.1",
     "lint-staged": "^16.2.7",
+    "nock": "^14.0.15",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.54.0"
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.1.9"
   },
   "peerDependencies": {
     "typescript": "^5"

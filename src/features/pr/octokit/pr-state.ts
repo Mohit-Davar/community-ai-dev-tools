@@ -14,7 +14,7 @@ export const EMPTY_STATE: StoredReviewState = {
 };
 
 // Read the hidden state block from a summary comment.
-function decodeState(body: string): StoredReviewState | null {
+export function decodeState(body: string): StoredReviewState | null {
   try {
     // Find the start of the hidden state block.
     const stateStart = body.indexOf(STATE_OPEN);
