@@ -1,4 +1,3 @@
-import type { ParsedFileDiff } from "@src/features/pr/git-diff";
 import { z } from "zod/v4";
 
 export const SeveritySchema = z.enum(["high", "medium", "low"]);
@@ -33,15 +32,11 @@ export const ReviewSchema = z.object({
       "A step-by-step fix guide including a real, secure code replacement wrapped in markdown code blocks. Avoid pseudocode."
     ),
 });
+
 export type Review = z.infer<typeof ReviewSchema>;
 
 export const ReviewsSchema = z.object({
   reviews: z.array(ReviewSchema),
 });
-export type Reviews = Review[];
 
-export interface DiffChunk {
-  chunkIndex: number;
-  diffs: ParsedFileDiff[];
-  totalChunks: number;
-}
+export type Reviews = Review[];

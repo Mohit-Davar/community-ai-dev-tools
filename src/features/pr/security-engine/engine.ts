@@ -1,18 +1,18 @@
-import type { ParsedFileDiff } from "@src/features/pr/git-diff";
 import {
   type Findings,
   rules as defaultRules,
   type SecurityRule,
 } from "@src/features/pr/security-engine";
 import { getConfig } from "@src/shared";
+import type { ParsedFileDiff } from "@src/shared/git-diff/types";
 
 export function runSecurityEngine(diffs: ParsedFileDiff[]): Findings[] {
   const findings: Findings[] = [];
   const config = getConfig();
   const rules: SecurityRule[] = [...defaultRules];
 
-  if (config.rules) {
-    for (const rule of config.rules) {
+  if (config.review?.security?.rules) {
+    for (const rule of config.review.security.rules) {
       rules.push({
         description: rule.description,
         fileExtensions: rule.fileExtensions,

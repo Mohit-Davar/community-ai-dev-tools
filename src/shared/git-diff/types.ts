@@ -16,3 +16,9 @@ export type ParsedFileDiff = {
   file: string;
   removed: Change[];
 };
+
+export interface DiffChunk<T = ParsedFileDiff> {
+  chunkIndex: number;
+  diffs: T[];
+  totalChunks: number;
+}

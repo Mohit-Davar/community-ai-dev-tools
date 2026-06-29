@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import { checkVulnerabilities } from "@src/features/pr/cve-detection";
 import { parseGitDiff } from "@src/features/pr/git-diff";
 import { callLLM } from "@src/features/pr/llm-call";
@@ -6,18 +7,19 @@ import {
   getPullRequestDiff,
   loadState,
   matchFindings,
+  postReviewComment,
 } from "@src/features/pr/octokit";
 import { runSecurityEngine } from "@src/features/pr/security-engine";
 import { expectError } from "@src/shared";
 
 export async function handlePullRequest({
-  apiKey,
+  commitSha,
   owner,
   prNumber,
   repo,
   token,
 }: {
-  apiKey: string;
+  commitSha: string;
   owner: string;
   prNumber: number;
   repo: string;
@@ -46,7 +48,8 @@ export async function handlePullRequest({
   // Convert the git diff into a structured format.
   const parsedDiff = parseGitDiff(rawDiff);
   if (parsedDiff.length === 0) {
-    return null;
+    core.warning("No file changes detected in PR.");
+    return;
   }
 
   // Scan newly added dependencies for known vulnerabilities.
@@ -64,7 +67,7 @@ export async function handlePullRequest({
 
   // Run LLM review.
   const [llmError, llmReviews] = await expectError(
-    callLLM(parsedDiff, securityScan, dependencyScan, apiKey)
+    callLLM(parsedDiff, securityScan, dependencyScan)
   );
   if (llmError) {
     throw new Error("Failed to generate review comments", {
@@ -80,14 +83,29 @@ export async function handlePullRequest({
     parsedDiff,
     loadedReviewState.state
   );
+  if (matched.length === 0 && fixed.length === 0) {
+    core.warning("Nothing to post and nothing to update.");
+    return;
+  }
 
   // Build the PR summary comment.
   const summary = generateSummary(matched, fixed);
-
-  return {
-    fixed,
-    matched,
-    summary,
-    summaryCommentId: loadedReviewState.summaryCommentId,
-  };
+  const [postError] = await expectError(
+    postReviewComment(
+      token,
+      owner,
+      repo,
+      prNumber,
+      commitSha,
+      matched,
+      fixed,
+      summary,
+      loadedReviewState.summaryCommentId
+    )
+  );
+  if (postError) {
+    throw new Error("Failed to publish review comments", {
+      cause: postError,
+    });
+  }
 }

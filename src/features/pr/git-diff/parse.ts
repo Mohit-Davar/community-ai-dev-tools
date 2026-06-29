@@ -1,60 +1,23 @@
-import type {
-  Change,
-  DiffLine,
-  ParsedFileDiff,
-} from "@src/features/pr/git-diff";
-import { getConfig } from "@src/shared";
-import { minimatch } from "minimatch";
+import {
+  type Change,
+  type DiffLine,
+  isIgnoredFile,
+  matchesScanPatterns,
+  type ParsedFileDiff,
+} from "@src/shared";
 import parseDiff from "parse-diff";
-
-const DEFAULT_IGNORED_PATTERNS = [
-  "*.png",
-  "*.jpg",
-  "*.jpeg",
-  "*.gif",
-  "*.svg",
-  "*.ico",
-  "*.pdf",
-  "*.mp3",
-  "*.mp4",
-  "*.map",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "bun.lockb",
-  "go.sum",
-  "Cargo.lock",
-  "Gemfile.lock",
-  "composer.lock",
-];
 
 // Parses a raw git diff string and filters out files
 export function parseGitDiff(diff: string): ParsedFileDiff[] {
   const parsedFiles = parseDiff(diff);
 
-  const config = getConfig();
-  const ignoredPatterns = [
-    ...DEFAULT_IGNORED_PATTERNS,
-    ...(config.ignore || []),
-  ];
-  const scanPatterns = config.filesToScan || [];
-
   return parsedFiles
     .map((file) => {
       const fileName = file.to ?? file.from ?? "unknown";
-
-      // Check if it should be included in scan patterns
-      if (scanPatterns.length > 0) {
-        const matchesScan = scanPatterns.some((p) => minimatch(fileName, p));
-        if (!matchesScan) {
-          return null;
-        }
+      if (!matchesScanPatterns(fileName)) {
+        return null;
       }
-
-      // Check if it should be explicitly ignored
-      const isIgnored = ignoredPatterns.some((p) =>
-        minimatch(fileName, p, { matchBase: true })
-      );
-      if (isIgnored) {
+      if (isIgnoredFile(fileName)) {
         return null;
       }
 

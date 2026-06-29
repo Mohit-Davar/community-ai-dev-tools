@@ -1,5 +1,5 @@
-name: "Review Owl"
-description: "Reviews pull requests for security issues, vulnerable dependencies, and code quality concerns."
+name: "Repo Owl"
+description: "AI-powered repository assistant for pull request security analysis and automated documentation generation."
 author: "Mohit Davar"
 
 branding:
@@ -8,12 +8,30 @@ branding:
 
 inputs:
   github-token:
-    description: "GitHub token used to read pull requests and post review comments."
+    description: "GitHub token used to read and write repository data."
     required: true
 
   openai-api-key:
-    description: "OpenAI API key used for AI-powered security review."
+    description: "OpenAI API key used for security analysis and documentation generation."
     required: true
+
+  gitbook-token:
+    description: "GitBook API token used to update GitBook documentation."
+    required: false
+
+  readme-api-key:
+    description: "ReadMe API key used to update ReadMe documentation."
+    required: false
+
+  confluence-base-url:
+    description: "Base URL of the Confluence instance"
+    required: false
+  confluence-username:
+    description: "Confluence username or email address."
+    required: false
+  confluence-api-token:
+    description: "Confluence API token used for authentication."
+    required: false
 
 runs:
   using: "node24"

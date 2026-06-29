@@ -1,6 +1,6 @@
 # Review Owl
 
-A GitHub Action that reviews Pull Requests for **security issues** and **vulnerabilities**. This GitHub Action runs on every pull request in your project and automatically flags potential security problems and posts findings directly on PRs. It is easily configurable for your project using a simple `.reviewowl.yml` file.
+A GitHub Action that reviews Pull Requests for **security issues** and **vulnerabilities**. This GitHub Action runs on every pull request in your project and automatically flags potential security problems and posts findings directly on PRs. It is easily configurable for your project using a simple `.repoowl.yml` file.
 
 ### Summary View
 
@@ -19,7 +19,7 @@ A GitHub Action that reviews Pull Requests for **security issues** and **vulnera
 3. [Setup & Usage](#setup--usage)
    - [GitHub Actions Workflow](#1-github-actions-workflow)
    - [Inputs & Secrets](#2-inputs--secrets)
-4. [Configuration (`.reviewowl.yml`)](#configuration-reviewowlyml)
+4. [Configuration (`.repoowl.yml`)](#configuration-reviewowlyml)
 5. [Local Development & Contribution](#local-development--contribution)
    - [Prerequisites](#prerequisites)
    - [Available Scripts](#available-scripts)
@@ -36,7 +36,7 @@ A GitHub Action that reviews Pull Requests for **security issues** and **vulnera
   3. **LLM-based Review**: Uses LLM model to review full diff context, validate findings, and detect deeper issues.
 - **Inline PR Comments**: Adds findings directly to relevant lines in the pull request.
 - **Noise Reduction**: Skips lockfiles, binaries, and generated assets to reduce irrelevant results.
-- **Configurable Behavior**: You can easily adjust this tool for your project using `.reviewowl.yml`, like choosing which files to scan, which ones to ignore, adding your own security rules, and selecting the LLM model.
+- **Configurable Behavior**: You can easily adjust this tool for your project using `.repoowl.yml`, like choosing which files to scan, which ones to ignore, adding your own security rules, and selecting the LLM model.
 
 ---
 
@@ -92,9 +92,9 @@ jobs:
 
 ---
 
-## Configuration (`.reviewowl.yml`)
+## Configuration (`.repoowl.yml`)
 
-You can control behavior using a .reviewowl.yml file:
+You can control behavior using a .repoowl.yml file:
 
 ```yaml
 # Specify the LLM Model
