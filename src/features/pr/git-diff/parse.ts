@@ -7,7 +7,14 @@ import {
 } from "@src/shared";
 import parseDiff from "parse-diff";
 
-// Parses a raw git diff string and filters out files
+/**
+ * Parses a raw git diff string and filters out files that should not be scanned.
+ * @param diff - The raw git diff string to parse.
+ * @returns An array of parsed file diffs containing only files that should be scanned.
+ * @remarks
+ * This function processes lines inside chunks to separate added, deleted, and unmodified context changes.
+ * To normalise the output data, the leading Git prefix metadata characters (`+`, `-`, or space) are sliced off from the starting index of the string content.
+ */
 export function parseGitDiff(diff: string): ParsedFileDiff[] {
   const parsedFiles = parseDiff(diff);
 
