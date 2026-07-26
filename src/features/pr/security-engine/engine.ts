@@ -3,8 +3,7 @@ import {
   rules as defaultRules,
   type SecurityRule,
 } from "@src/features/pr/security-engine";
-import { getConfig } from "@src/shared";
-import type { ParsedFileDiff } from "@src/shared/git-diff/types";
+import { getConfig, type ParsedFileDiff } from "@src/shared";
 
 /**
  * Runs a set of security rules against the added lines in a collection of file diffs.

@@ -1,9 +1,20 @@
-import type { DiffChunk } from "@src/shared/git-diff/types";
+import type { DiffChunk } from "@src/shared";
 
+/** The maximum number of tokens allowed in a single chunk. */
 export const MAX_TOKENS_PER_CHUNK = 10000;
+/** The maximum number of chunks to process concurrently. */
 export const MAX_CONCURRENT_CHUNKS = 3;
 
-// Split diffs into chunks that fit within the model's context window.
+/**
+ * Splits an array of items into chunks based on a maximum token count.
+ * This is used to ensure that diffs sent to the LLM fit within its context window.
+ *
+ * @template T The type of items to chunk.
+ * @param items - The array of items to be chunked.
+ * @param getTokenCount - A function that returns the token count for a given item.
+ * @param maxTokens - The maximum number of tokens allowed per chunk.
+ * @returns An array of `DiffChunk` objects.
+ */
 export function chunkDiffs<T>(
   items: T[],
   getTokenCount: (item: T) => number,

@@ -1,74 +1,151 @@
 import * as core from "@actions/core";
-import { detectAudiences } from "@src/features/push/audience";
-import { getPushDiff } from "@src/features/push/git-diff";
-import { publishToAllPlatforms } from "@src/features/push/platforms";
-import type { PlatformCredentials } from "@src/shared";
-import { expectError, getConfig } from "@src/shared";
+import { generateDocumentEdits } from "@src/features/push/generator";
+import { collectPRContext } from "@src/features/push/octokit";
+import { publishDocumentUpdate } from "@src/features/push/publisher";
+import { retrieveDocumentContent } from "@src/features/push/retriever";
+import { selectDocuments } from "@src/features/push/select-documents";
+import { applyAndValidateEdits } from "@src/features/push/validator";
+import { expectError, getConfig, type PlatformCredentials } from "@src/shared";
+import pLimit from "p-limit";
 
-export async function handlePushEvent({
-  after,
-  before,
+const DOC_CONCURRENCY = 3;
+const limit = pLimit(DOC_CONCURRENCY);
+
+/**
+ * Orchestrates the entire documentation update workflow.
+ * This function coordinates the process of collecting PR context, selecting relevant documents,
+ * generating edits, validating them, and finally publishing the updates.
+ *
+ * @param params - The parameters required for the workflow.
+ * @param params.credentials - Credentials for accessing documentation platforms.
+ * @param params.owner - The owner of the repository.
+ * @param params.prNumber - The pull request number.
+ * @param params.repo - The repository name.
+ * @param params.token - The GitHub token for the code repository.
+ */
+export async function handleMerge({
   credentials,
   owner,
+  prNumber,
   repo,
   token,
 }: {
-  after: string;
-  before: string;
   credentials: PlatformCredentials;
   owner: string;
+  prNumber: number;
   repo: string;
   token: string;
 }) {
-  // Collect changed files and diff
-  const [diffError, pushChanges] = await expectError(
-    getPushDiff(token, owner, repo, before, after)
+  // Collect context from the pull request, including diff, commits, and metadata.
+  const [collectorError, prContext] = await expectError(
+    collectPRContext({ owner, prNumber, repo, token })
   );
-  if (diffError) {
-    throw new Error(
-      `Failed to retrieve repository changes between ${before} and ${after}`,
-      { cause: diffError }
-    );
+  if (collectorError) {
+    throw new Error("Failed to collect pull request context", {
+      cause: collectorError,
+    });
   }
-  if (pushChanges.changedFiles.length === 0) {
+
+  // Load documentation sources from the configuration file.
+  const config = getConfig();
+  const sources = config.documentation?.documents;
+  if (!sources?.length) {
     core.info(
-      "No file changes detected in this push. Skipping documentation analysis."
+      "No documentation sources are configured. Skipping documentation updates."
     );
     return;
   }
 
-  // Determine affected audiences via LLM
-  const [audienceError, audiences] = await expectError(
-    detectAudiences(pushChanges)
+  // Use an LLM to select which documents are relevant to the PR changes.
+  const [selectionError, selectedDocs] = await expectError(
+    selectDocuments(prContext, sources, credentials.docsGithubToken)
   );
-  if (audienceError) {
-    throw new Error(
-      "Failed to determine which documentation audiences are affected by the repository changes.",
-      { cause: audienceError }
-    );
+  if (selectionError) {
+    throw new Error("Failed to select relevant documents", {
+      cause: selectionError,
+    });
   }
-  if (audiences.length === 0) {
-    core.info(
-      "No affected documentation audiences detected. Skipping documentation updates."
-    );
+  if (selectedDocs.length === 0) {
+    core.info("No documents were selected for update by the LLM.");
     return;
   }
 
-  // Load configured documentation targets.
-  const documents = getConfig().documentation?.documents ?? [];
-  if (documents.length === 0) {
-    core.info(
-      "No documentation targets configured. Skipping documentation updates."
-    );
-    return;
-  }
-  const [publishError] = await expectError(
-    publishToAllPlatforms(documents, pushChanges, audiences, credentials)
+  // Process each selected document concurrently.
+  type ProcessResult = {
+    doc: (typeof selectedDocs)[number];
+    error?: Error;
+  };
+  const processingPromises = selectedDocs.map((doc) =>
+    limit(async (): Promise<ProcessResult> => {
+      try {
+        core.info(
+          `Processing selected document: ${doc.path} (${doc.platform})`
+        );
+        // Retrieve the current content.
+        const [retrieverError, currentContent] = await expectError(
+          retrieveDocumentContent(doc, credentials)
+        );
+        if (retrieverError) {
+          throw new Error(`Failed to retrieve content for ${doc.path}`, {
+            cause: retrieverError,
+          });
+        }
+        // Generate edits.
+        const [generatorError, edits] = await expectError(
+          generateDocumentEdits(prContext, currentContent)
+        );
+        if (generatorError) {
+          throw new Error(`Failed to generate edits for ${doc.path}`, {
+            cause: generatorError,
+          });
+        }
+        if (edits.length === 0) {
+          core.info(`No edits were generated for ${doc.path}.`);
+          return { doc };
+        }
+        // Validate edits.
+        const validationResult = applyAndValidateEdits(
+          currentContent,
+          edits,
+          prContext.diff
+        );
+        if (!validationResult.isValid || !validationResult.updatedContent) {
+          core.warning(
+            `Validation failed for ${doc.path}: ${validationResult.reason}. Skipping publication.`
+          );
+          return { doc };
+        }
+        // Publish the updated document.
+        const [publishError, url] = await expectError(
+          publishDocumentUpdate({
+            codeOwner: owner,
+            codePrNumber: prNumber,
+            codeRepo: repo,
+            codeToken: token,
+            credentials,
+            routedDoc: doc,
+            updatedContent: validationResult.updatedContent,
+          })
+        );
+        if (publishError) {
+          throw new Error(`Failed to publish update for ${doc.path}`, {
+            cause: publishError,
+          });
+        }
+        core.info(`Successfully published update for ${doc.path}: ${url}`);
+        return { doc };
+      } catch (err) {
+        return { doc, error: err as Error };
+      }
+    })
   );
-  if (publishError) {
-    throw new Error(
-      "Failed to publish documentation updates to one or more platforms.",
-      { cause: publishError }
-    );
+
+  const results = await Promise.all(processingPromises);
+  const failed = results.filter((r) => r.error);
+  if (failed.length > 0) {
+    core.error(`Failed to process ${failed.length} document(s):`);
+    for (const { doc, error } of failed) {
+      core.error(`- ${doc.path}: ${error?.message}`);
+    }
   }
 }
