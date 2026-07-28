@@ -1,6 +1,6 @@
-# Review Owl
+# Repo Owl
 
-A GitHub Action that reviews Pull Requests for **security issues** and **vulnerabilities**. This GitHub Action runs on every pull request in your project and automatically flags potential security problems and posts findings directly on PRs. It is easily configurable for your project using a simple `.repoowl.yml` file.
+A GitHub Action that provides **AI-powered PR security reviews** and **Automated Documentation Updates**. It runs on pull requests to flag security vulnerabilities, and on pushes to `main` to automatically update your GitBook and ReadMe documentation via GitHub Sync. It is easily configurable using a simple `.repoowl.yml` file.
 
 ### Summary View
 
@@ -30,13 +30,24 @@ A GitHub Action that reviews Pull Requests for **security issues** and **vulnera
 
 ## Features
 
+### 🛡️ Security Reviews
+
 - **Three-Stage Analysis**:
   1. **Dependency Scanning**: Checks changed dependencies against the [OSV database](https://osv.dev/) for known vulnerabilities.
   2. **Static Regex Scan**: Detects exposed secrets, keys, and unsafe function usage.
   3. **LLM-based Review**: Uses LLM model to review full diff context, validate findings, and detect deeper issues.
 - **Inline PR Comments**: Adds findings directly to relevant lines in the pull request.
 - **Noise Reduction**: Skips lockfiles, binaries, and generated assets to reduce irrelevant results.
-- **Configurable Behavior**: You can easily adjust this tool for your project using `.repoowl.yml`, like choosing which files to scan, which ones to ignore, adding your own security rules, and selecting the LLM model.
+
+### 📚 Automated Documentation Updates
+
+- **AI-Powered Discovery**: Evaluates code changes and automatically identifies which documentation files need updates.
+- **Centralized Docs Support**: Designed to push updates to a centralized docs monorepo using GitHub Sync for GitBook and ReadMe.
+- **Audience Filtering**: Only updates documentation relevant to the impacted audience (e.g., developers vs. end-users).
+
+### ⚙️ Configurable Behavior
+
+- Easily adjust this tool for your project using `.repoowl.yml`, like adding your own security rules, configuring documentation paths, and selecting the LLM model.
 
 ---
 
@@ -60,67 +71,89 @@ A GitHub Action that reviews Pull Requests for **security issues** and **vulnera
 Create a file named `.github/workflows/security-review.yml` in your repository:
 
 ```yaml
-name: Security Review Action
+name: Repo Owl
 
 on:
+  push:
+    branches:
+      - main # Required for automated documentation updates
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened] # Required for security reviews
 
 jobs:
-  review:
-    name: Run Security Review
+  repo-owl:
+    name: Run Repo Owl
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write # Required for inline code comments
-      issues: write # Required for the main PR summary comment and state tracking
+      issues: write # Required for the main PR summary comment
 
     steps:
-      - name: Run Security Review
-        uses: Org/Repo@tag
+      - name: Run Repo Owl
+        uses: Mohit-Davar/community-ai-dev-tools@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Required for Centralized Docs updates (Must be a PAT with write access to the docs repo)
+          docs-github-token: ${{ secrets.DOCS_GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 ### 2. Inputs & Secrets
 
-| Input            | Description                                                | Required | Default / Note                        |
-| :--------------- | :--------------------------------------------------------- | :------: | :------------------------------------ |
-| `github-token`   | GitHub token used to fetch the PR diff and write comments. | **Yes**  | Usually `${{ secrets.GITHUB_TOKEN }}` |
-| `openai-api-key` | API key for LLM-based analysis                             | **Yes**  | Save in repository **Secrets**        |
+| Input               | Description                                                | Required | Default / Note                        |
+| :------------------ | :--------------------------------------------------------- | :------: | :------------------------------------ |
+| `github-token`      | GitHub token used to fetch the PR diff and write comments. | **Yes**  | Usually `${{ secrets.GITHUB_TOKEN }}` |
+| `openai-api-key`    | API key for LLM-based analysis                             | **Yes**  | Save in repository **Secrets**        |
+| `docs-github-token` | PAT used to push documentation updates to remote repos.    |    No    | Required if using remote docs repo    |
 
 ---
 
 ## Configuration (`.repoowl.yml`)
 
-You can control behavior using a .repoowl.yml file:
+You can control behavior using a `.repoowl.yml` file:
 
 ```yaml
-# Specify the LLM Model
-model: "gpt-5-mini"
+# ==========================================
+# 1. DOCUMENTATION UPDATES CONFIGURATION
+# ==========================================
+documentation:
+  enabled: true
+  documents:
+    # Example: Push to a centralized docs repo (GitBook Sync)
+    - platform: gitbook
+      repo: "meta/meta-docs" # The central docs repo
+      path: "docs/whatsapp/customers/read.md" # Directory path in the central repo
+      audience: user
+      purpose: "End-user guides for WhatsApp"
 
-# Explicitly exclude files or directories using glob patterns
-ignore:
-  - "**/tests/**"
-  - "docs/**"
-  - "*.test.js"
+    # Example: Update ReadMe docs via GitHub Sync
+    - platform: readme
+      repo: "meta/meta-docs"
+      path: "docs/whatsapp/developers/api/"
+      audience: developer
+      purpose: "Technical API references"
 
-# Explicitly specify files to scan (takes precedence if defined)
-filesToScan:
-  - "src/**/*.ts"
-  - "lib/**/*.js"
+# ==========================================
+# 2. PR SECURITY REVIEW CONFIGURATION
+# ==========================================
+review:
+  model: "gpt-5-mini"
 
-# Define custom regex rules for the static scanning engine
-rules:
-  - id: "slack-webhook"
-    description: "Slack webhook URL detected. Avoid committing tokens."
-    pattern: "https://hooks\\.slack\\.com/services/T[A-Z0-9_]+/B[A-Z0-9_]+/[A-Za-z0-9_]+"
-    severity: "high"
-    fileExtensions:
-      - ".ts"
-      - ".js"
-      - ".json"
+  files:
+    exclude:
+      - "**/tests/**"
+      - "docs/**"
+
+  security:
+    rules:
+      - id: "slack-webhook"
+        description: "Slack webhook URL detected. Avoid committing tokens."
+        pattern: "https://hooks\\.slack\\.com/services/T[A-Z0-9_]+/B[A-Z0-9_]+/[A-Za-z0-9_]+"
+        severity: "high"
+        fileExtensions:
+          - ".ts"
+          - ".js"
 ```
 
 ### Configuration Options Reference
