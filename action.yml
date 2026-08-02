@@ -11,17 +11,14 @@ inputs:
   github-token:
     description: "GitHub token used to read and write repository data."
     required: true
-
   # OpenAI API key used for AI-powered code analysis and documentation generation.
   openai-api-key:
     description: "OpenAI API key used for security analysis and documentation generation."
     required: true
-
   # GitHub Personal Access Token used to create, update, and delete generated documentation in the documentation repository.
   docs-token:
     description: "Personal Access Token used to authenticate and push documentation updates to a remote docs repository."
     required: false
-
   # Base URL of the target Confluence instance.
   confluence-base-url:
     description: "Base URL of the Confluence instance"

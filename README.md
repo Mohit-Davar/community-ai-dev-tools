@@ -83,13 +83,9 @@ Create `.github/workflows/mifoshawk.yml`:
 name: Mifos Hawk
 
 on:
-  # Required for automated documentation updates
-  push:
-    branches:
-      - main
-  # Required for security reviews
+  # Trigger for reviews and documentation updates
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
 
 jobs:
   mifos-hawk:
@@ -107,7 +103,6 @@ jobs:
           # Required for all operations
           github-token: ${{ secrets.GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-
           # Required for documentation updates
           docs-github-token: ${{ secrets.DOCS_GITHUB_TOKEN }}
           confluence-base-url: ${{ secrets.CONFLUENCE_BASE_URL }}
