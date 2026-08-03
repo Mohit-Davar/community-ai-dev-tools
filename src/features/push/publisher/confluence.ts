@@ -40,31 +40,33 @@ export async function publishConfluenceUpdate({
   const confluencePageUrl = `${normalizedBaseUrl}/wiki/pages/viewpage.action?pageId=${pageId}`;
 
   const commentBody = [
-    `## Documentation update suggested`,
+    `# 📝 Documentation update suggested`,
     ``,
-    `Triggered by [PR #${codePrNumber}](https://github.com/${codeOwner}/${codeRepo}/pull/${codePrNumber}) in [${codeOwner}/${codeRepo}](https://github.com/${codeOwner}/${codeRepo}).`,
+    `> **Note**  `,
+    `> Triggered by [PR #${codePrNumber}](https://github.com/${codeOwner}/${codeRepo}/pull/${codePrNumber}) in **${codeOwner}/${codeRepo}**.`,
     ``,
-    `**Confluence page:** [${pageId}](${confluencePageUrl})`,
-    `**Reason:** ${reason}`,
+    `### 📍 Reference Details`,
+    `| Property | Value |`,
+    `| :--- | :--- |`,
+    `| **Confluence Page** | [📄 Page ID: ${pageId}](${confluencePageUrl}) |`,
+    `| **Reason** | ${reason} |`,
     ``,
+    `### 🛠️ Proposed Content`,
     `<details>`,
-    `<summary><strong>Proposed content</strong></summary>`,
+    `<summary><strong>Click to expand suggested source code</strong></summary>`,
     ``,
     `\`\`\`html`,
     updatedContent,
     `\`\`\``,
-    ``,
     `</details>`,
     ``,
-    `### Next steps`,
-    ``,
+    `### 🚀 Next Steps`,
     `1. Review the proposed content above.`,
     `2. Open the [Confluence page](${confluencePageUrl}).`,
-    `3. Apply the changes, or paste the block directly into the page editor.`,
+    `3. Edit the page and apply the changes (or copy-paste the block directly into the page editor).`,
     ``,
     `---`,
-    ``,
-    `*Opened automatically by RepoOwl.*`,
+    `*Opened automatically by **RepoOwl**.*`,
   ].join("\n");
 
   const { data: commentResponse } = await codeOctokit.rest.issues.createComment(
@@ -77,96 +79,4 @@ export async function publishConfluenceUpdate({
   );
 
   return commentResponse.html_url;
-}
-
-/**
- * This is an optional helper function that can be used if direct updates are desired.
- * It fetches the current page version, increments it, and then PUTs the new content.
- *
- * @param params - The parameters for directly updating the Confluence page.
- * @param params.apiToken - The Confluence API token.
- * @param params.baseUrl - The base URL of the Confluence instance.
- * @param params.markdownContent - The new content in Markdown format.
- * @param params.pageId - The ID of the page to update.
- * @param params.username - The Confluence username for authentication.
- * @throws An error if fetching the page or updating it fails.
- */
-export async function updateConfluencePageDirectly({
-  apiToken,
-  baseUrl,
-  markdownContent,
-  pageId,
-  username,
-}: {
-  apiToken: string;
-  baseUrl: string;
-  markdownContent: string;
-  pageId: string;
-  username: string;
-}): Promise<void> {
-  const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
-  const auth = Buffer.from(`${username}:${apiToken}`).toString("base64");
-
-  // Fetch the current page version and title to ensure a safe update.
-  const getResponse = await fetch(
-    `${normalizedBaseUrl}/wiki/api/v2/pages/${pageId}`,
-    {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Basic ${auth}`,
-      },
-      method: "GET",
-    }
-  );
-
-  if (!getResponse.ok) {
-    throw new Error(
-      `Failed to fetch current Confluence page version. Status: ${getResponse.status}`
-    );
-  }
-
-  const pageData = (await getResponse.json()) as {
-    title: string;
-    version?: {
-      number?: number;
-    };
-  };
-
-  const currentVersion = pageData.version?.number ?? 1;
-  const pageTitle = pageData.title;
-
-  // Wrap the Markdown content in Confluence's storage format using a macro.
-  const storageValue = `<ac:structured-macro ac:name="markdown" ac:schema-version="1">\n  <ac:plain-text-body><![CDATA[${markdownContent}]]></ac:plain-text-body>\n</ac:structured-macro>`;
-
-  // Send the updated content via a PUT request, incrementing the page version.
-  const putResponse = await fetch(
-    `${normalizedBaseUrl}/wiki/api/v2/pages/${pageId}`,
-    {
-      body: JSON.stringify({
-        body: {
-          representation: "storage",
-          value: storageValue,
-        },
-        id: pageId,
-        status: "current",
-        title: pageTitle,
-        version: {
-          number: currentVersion + 1,
-        },
-      }),
-      headers: {
-        Accept: "application/json",
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-      },
-      method: "PUT",
-    }
-  );
-
-  if (!putResponse.ok) {
-    const details = await putResponse.text().catch(() => "");
-    throw new Error(
-      `Failed to update Confluence page. Status: ${putResponse.status}. Details: ${details}`
-    );
-  }
 }

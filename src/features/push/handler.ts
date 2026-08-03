@@ -3,6 +3,7 @@ import { generateDocumentEdits } from "@src/features/push/generator";
 import { publishDocumentUpdate } from "@src/features/push/publisher";
 import { retrieveDocumentContent } from "@src/features/push/retriever";
 import { selectDocuments } from "@src/features/push/select-documents";
+import type { ProcessResult } from "@src/features/push/types";
 import { validateEdits } from "@src/features/push/validator";
 import {
   expectError,
@@ -12,8 +13,7 @@ import {
 } from "@src/shared";
 import pLimit from "p-limit";
 
-const DOC_CONCURRENCY = 3;
-const limit = pLimit(DOC_CONCURRENCY);
+const limit = pLimit(3);
 
 /**
  * Orchestrates the entire documentation update workflow.
@@ -41,7 +41,7 @@ export async function handleMerge({
   token: string;
 }) {
   // Collect context from the pull request, including diff, commits, and metadata.
-  const [collectorError, prContext] = await expectError(
+  const [contextError, prContext] = await expectError(
     getPRContext({
       owner,
       prNumber,
@@ -49,19 +49,16 @@ export async function handleMerge({
       token,
     })
   );
-  if (collectorError) {
+  if (contextError) {
     throw new Error("Failed to collect pull request context", {
-      cause: collectorError,
+      cause: contextError,
     });
   }
 
   // Load documentation sources from the configuration file.
-  const config = getConfig();
-  const sources = config.documentation?.documents;
+  const sources = getConfig().documentation?.documents;
   if (!sources?.length) {
-    core.info(
-      "No documentation sources are configured. Skipping documentation updates."
-    );
+    core.info("No documentation sources configured.");
     return;
   }
 
@@ -70,38 +67,19 @@ export async function handleMerge({
     selectDocuments(prContext, sources, credentials)
   );
   if (selectionError) {
-    throw new Error("Failed to select relevant documents", {
+    throw new Error("Failed to select relevant documents.", {
       cause: selectionError,
     });
   }
-  if (selectedDocs.length === 0) {
-    core.info("No documents were selected for update by the LLM.");
+  if (!selectedDocs.length) {
+    core.info("No documentation updates required.");
     return;
   }
-
-  // Process each selected document concurrently.
-  type ProcessResult =
-    | {
-        doc: (typeof selectedDocs)[number];
-        status: "published";
-        url: string;
-      }
-    | {
-        doc: (typeof selectedDocs)[number];
-        reason: string;
-        status: "skipped";
-      }
-    | {
-        doc: (typeof selectedDocs)[number];
-        error: Error;
-        status: "failed";
-      };
 
   const results = await Promise.all(
     selectedDocs.map((doc) =>
       limit(async (): Promise<ProcessResult> => {
         try {
-          core.info(`Processing: ${doc.path}`);
           // Retrieve current document.
           const [retrievalError, currentContent] = await expectError(
             retrieveDocumentContent(doc, credentials)
@@ -121,7 +99,7 @@ export async function handleMerge({
               cause: generationError,
             });
           }
-          if (edits.length === 0) {
+          if (!edits.length) {
             return {
               doc,
               reason: "No edits were generated.",
@@ -175,36 +153,27 @@ export async function handleMerge({
       })
     )
   );
-
-  const published = results.filter(
-    (result): result is Extract<ProcessResult, { status: "published" }> =>
-      result.status === "published"
-  );
-
-  const skipped = results.filter(
-    (result): result is Extract<ProcessResult, { status: "skipped" }> =>
-      result.status === "skipped"
-  );
-
   const failed = results.filter(
     (result): result is Extract<ProcessResult, { status: "failed" }> =>
       result.status === "failed"
   );
-
-  core.info("");
-  core.info("Documentation update summary");
-  core.info("----------------------------");
-  core.info(`Selected : ${selectedDocs.length}`);
-  core.info(`Published: ${published.length}`);
-  core.info(`Skipped  : ${skipped.length}`);
-  core.info(`Failed   : ${failed.length}`);
-  for (const result of published) {
-    core.info(`✓ ${result.doc.path}`);
-  }
-  for (const result of skipped) {
-    core.warning(`↷ ${result.doc.path}: ${result.reason}`);
-  }
-  for (const result of failed) {
-    core.error(`✗ ${result.doc.path}: ${result.error.message}`);
+  if (failed.length) {
+    core.error(`Documentation update failed for ${failed.length} document(s).`);
+    for (const { doc, error } of failed) {
+      core.error(`Document: ${doc.path}`);
+      core.error(`Error: ${error.message}`);
+      let cause: unknown = error;
+      let depth = 0;
+      while (cause instanceof Error) {
+        if (depth > 0) {
+          core.error(`Cause ${depth}: ${cause.message}`);
+        }
+        if (cause.stack) {
+          core.error(cause.stack);
+        }
+        cause = cause.cause;
+        depth++;
+      }
+    }
   }
 }

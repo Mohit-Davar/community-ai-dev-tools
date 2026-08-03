@@ -175,15 +175,9 @@ export async function publishGitHubUpdate({
     fileSection,
     `**Reason:** ${reason}`,
     ``,
-    `### Review`,
-    ``,
-    `- [ ] Changes are accurate and reflect the code diff`,
-    `- [ ] Formatting and tone match existing docs`,
-    `- [ ] No unrelated sections touched`,
-    ``,
     `---`,
     ``,
-    `*Opened automatically by RepoOwl.*`,
+    `*Auto-opened by MifosHawk 🦅.*`,
   ].join("\n");
 
   const { data: prResponse } = await octokit.rest.pulls.create({
