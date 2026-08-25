@@ -1,12 +1,8 @@
-"""
-extract_excel.py
-Emits ExtractedData[] JSON to stdout for every worksheet in an .xlsx file.
-Usage: python extract_excel.py <featureId> <path/to/file.xlsx>
-"""
-
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import re
 import sys
 from datetime import datetime, date
@@ -14,6 +10,10 @@ from typing import Any
 
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
+
+# Logging to stderr — does not pollute the JSON stdout output.
+logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="[excel] %(message)s")
+_log = logging.getLogger(__name__)
 
 
 def cell_str(v: Any) -> str:
@@ -76,22 +76,40 @@ TOPIC_RULES: list[tuple[str, str]] = [
     (r"\b(integrat|external system|third.?party)\b", "integration"),
 ]
 
+# Pre-compiled patterns for hot-path lookups (avoid recompiling on every call).
+_TOPIC_PATS = [(re.compile(p, re.I), t) for p, t in TOPIC_RULES]
+_STATUS_OPEN = re.compile(
+    r"\b(to be discussed|not yet|tbd|pp yet|open|unclear|pending|new bucket)\b", re.I
+)
+_STATUS_INFERRED = re.compile(r"\b(implied|assumed|inferred|should|likely)\b", re.I)
+# Single regex covering all recognized parameter key names for params_block().
+_PARAMS_RE = re.compile(
+    r"interest rate|days in year|days in month|disbursement|origination fees"
+    r"|capitalized income|total amount|repaid every|capitalized income date"
+    r"|maturity date|income amount|capitalized income adjustment date"
+    r"|capitalized income adjustment amount|should iterate|iterate with",
+    re.I,
+)
+_UC_PAT = re.compile(r"^uc[\s\-_]?\d+", re.I)
+
+
+def _get(cols: list[str], c: int | None) -> str:
+    """Return stripped cell value at index *c*, or '' if None or out-of-range."""
+    return cols[c].strip() if c is not None and c < len(cols) else ""
+
 
 def topic(text: str) -> str:
     lo = text.lower()
-    for pat, t in TOPIC_RULES:
-        if re.search(pat, lo):
+    for pat, t in _TOPIC_PATS:
+        if pat.search(lo):
             return t
     return "other"
 
 
 def status(text: str) -> str:
-    lo = text.lower()
-    if re.search(
-        r"\b(to be discussed|not yet|tbd|pp yet|open|unclear|pending|new bucket)\b", lo
-    ):
+    if _STATUS_OPEN.search(text):
         return "open"
-    if re.search(r"\b(implied|assumed|inferred|should|likely)\b", lo):
+    if _STATUS_INFERRED.search(text):
         return "inferred"
     return "confirmed"
 
@@ -113,7 +131,7 @@ def fact(
     full = f"{label} {content}"
     rs = s or status(full)
     return {
-        "id": f"fact_{sid}_{idx}"[:64],
+        "id": f"fact_{hashlib.md5(f'{sid}_{idx}'.encode()).hexdigest()[:12]}",
         "topic": t or topic(full),
         "label": label[:200],
         "content": content[:2000],
@@ -133,7 +151,7 @@ def example(
     result: str,
 ) -> dict:
     return {
-        "id": f"ex_{sid}_{idx}"[:64],
+        "id": f"ex_{hashlib.md5(f'{sid}_{idx}'.encode()).hexdigest()[:12]}",
         "title": title[:200],
         "scenario": scenario[:500],
         "steps": steps,
@@ -152,27 +170,10 @@ def find_header(rows: list[tuple[int, list]], keywords: list[str]) -> int | None
 
 
 def params_block(rows: list[tuple[int, list]], max_rows: int = 30) -> dict[str, str]:
-    KEYS = {
-        "interest rate",
-        "days in year",
-        "days in month",
-        "disbursement",
-        "origination fees",
-        "capitalized income",
-        "total amount",
-        "repaid every",
-        "capitalized income date",
-        "maturity date",
-        "income amount",
-        "capitalized income adjustment date",
-        "capitalized income adjustment amount",
-        "should iterate",
-        "iterate with",
-    }
     out: dict[str, str] = {}
     for _, row in rows[:max_rows]:
         cols = compact(row)
-        if len(cols) >= 2 and any(k in cols[0].lower() for k in KEYS):
+        if len(cols) >= 2 and _PARAMS_RE.search(cols[0]):
             out[cols[0]] = " | ".join(cols[1:])
     return out
 
@@ -187,24 +188,20 @@ def parse_schedule(rows: list[tuple[int, list]], hi: int) -> list[dict]:
     steps, n = [], 1
     for _, row in rows[hi + 1 :]:
         cols = [cell_str(c) for c in row]
-
-        def g(c):
-            return cols[c].strip() if c is not None and c < len(cols) else ""
-
-        dv = g(dc)
+        dv = _get(cols, dc)
         if not dv or not re.match(r"\d{4}-\d{2}-\d{2}", dv):
             continue
-        if g(0).lower() in ("total", ""):
+        if _get(cols, 0).lower() in ("total", ""):
             break
         pts = [f"Date: {dv}"]
-        if g(bc):
-            pts.append(f"Balance: ${g(bc)}")
-        if g(ec):
-            pts.append(f"EMI: ${g(ec)}")
-        if g(pc):
-            pts.append(f"Principal: ${g(pc)}")
-        if g(ic):
-            pts.append(f"Interest: ${g(ic)}")
+        if _get(cols, bc):
+            pts.append(f"Balance: ${_get(cols, bc)}")
+        if _get(cols, ec):
+            pts.append(f"EMI: ${_get(cols, ec)}")
+        if _get(cols, pc):
+            pts.append(f"Principal: ${_get(cols, pc)}")
+        if _get(cols, ic):
+            pts.append(f"Interest: ${_get(cols, ic)}")
         steps.append({"step": n, "description": " | ".join(pts)})
         n += 1
     return steps
@@ -224,45 +221,41 @@ def parse_txn_table(
     skip = {"accrual", "transaction type"}
     for _, row in rows[hi + 1 :]:
         cols = [cell_str(c) for c in row]
-
-        def g(c):
-            return cols[c].strip() if c is not None and c < len(cols) else ""
-
-        txn = g(tc)
+        txn = _get(cols, tc)
         if not txn:
-            if (g(dbc) or g(crc)) and steps:
+            if (_get(cols, dbc) or _get(cols, crc)) and steps:
                 suf = []
-                if g(dbc):
-                    suf.append(f"DR: {g(dbc)[:80]}")
-                if g(crc):
-                    suf.append(f"CR: {g(crc)[:80]}")
+                if _get(cols, dbc):
+                    suf.append(f"DR: {_get(cols, dbc)[:80]}")
+                if _get(cols, crc):
+                    suf.append(f"CR: {_get(cols, crc)[:80]}")
                 steps[-1]["description"] += " | " + " | ".join(suf)
             continue
         amts = ", ".join(
             f"${c}" for c in cols if re.match(r"^-?[\d]+\.?\d*$", c.strip())
         )[:60]
         pts = [f"[{txn}]"]
-        if g(dc):
-            pts.append(f"date={g(dc)}")
+        if _get(cols, dc):
+            pts.append(f"date={_get(cols, dc)}")
         if amts:
             pts.append(amts)
-        if g(dbc):
-            pts.append(f"DR: {g(dbc)[:70]}")
-        if g(crc):
-            pts.append(f"CR: {g(crc)[:70]}")
+        if _get(cols, dbc):
+            pts.append(f"DR: {_get(cols, dbc)[:70]}")
+        if _get(cols, crc):
+            pts.append(f"CR: {_get(cols, crc)[:70]}")
         steps.append({"step": n, "description": " | ".join(pts)})
         n += 1
-        if txn.lower() not in skip and (g(dbc) or g(crc)):
-            label = f"Transaction: {txn}" + (f" ({g(dc)})" if g(dc) else "")
+        if txn.lower() not in skip and (_get(cols, dbc) or _get(cols, crc)):
+            label = f"Transaction: {txn}" + (f" ({_get(cols, dc)})" if _get(cols, dc) else "")
             content = " | ".join(
                 filter(
                     None,
                     [
                         f"Type: {txn}",
-                        f"Date: {g(dc)}" if g(dc) else "",
+                        f"Date: {_get(cols, dc)}" if _get(cols, dc) else "",
                         f"Amounts: {amts}" if amts else "",
-                        f"DEBIT GL: {g(dbc)}" if g(dbc) else "",
-                        f"CREDIT GL: {g(crc)}" if g(crc) else "",
+                        f"DEBIT GL: {_get(cols, dbc)}" if _get(cols, dbc) else "",
+                        f"CREDIT GL: {_get(cols, crc)}" if _get(cols, crc) else "",
                     ],
                 )
             )
@@ -289,7 +282,7 @@ def sheet_type(ws: Worksheet, name: str) -> str:
         return "accounting"
     if n == "acs":
         return "acs"
-    if re.match(r"^uc[\s\-_]?\d+$", n) or n == "uc-13":
+    if _UC_PAT.match(n):
         return "use_case"
     if n in ("example calculation", "schedule example"):
         return "schedule_example"
@@ -538,20 +531,16 @@ def parse_amortization(ws, sid, fid, name):
         )
         for _, row in rows[hi + 1 :]:
             cols = [cell_str(c) for c in row]
-
-            def g(c):
-                return cols[c].strip() if c is not None and c < len(cols) else ""
-
-            txn = g(tc)
+            txn = _get(cols, tc)
             if not txn:
                 continue
             pts = [f"[{txn}]"]
-            if g(dc):
-                pts.append(f"date={g(dc)}")
-            if g(ec):
-                pts.append(f"daily_amort=${g(ec)}")
-            if g(fc):
-                pts.append(f"fees_bal=${g(fc)}")
+            if _get(cols, dc):
+                pts.append(f"date={_get(cols, dc)}")
+            if _get(cols, ec):
+                pts.append(f"daily_amort=${_get(cols, ec)}")
+            if _get(cols, fc):
+                pts.append(f"fees_bal=${_get(cols, fc)}")
             amort_steps.append({"step": n, "description": " | ".join(pts)})
             n += 1
 
@@ -644,7 +633,7 @@ def parse_playground(ws, sid, fid):
 
 
 def parse_generic(ws, sid, fid, name):
-    return [
+    facts = [
         fact(
             sid,
             fid,
@@ -654,12 +643,14 @@ def parse_generic(ws, sid, fid, name):
         )
         for i, (rn, row) in enumerate(non_empty_rows(ws))
         if len(" ".join(compact(row))) >= 5
-    ], []
+    ]
+    return facts, []
 
 
 def process_sheet(ws: Worksheet, name: str, stem: str, fid: str) -> dict:
     sid = source_id(stem, name)
     t = sheet_type(ws, name)
+    _log.info("Sheet '%s' → type=%s  sid=%s", name, t, sid)
     dispatch = {
         "qa": lambda: parse_qa(ws, sid, fid),
         "accounting": lambda: parse_accounting(ws, sid, fid),
@@ -671,6 +662,7 @@ def process_sheet(ws: Worksheet, name: str, stem: str, fid: str) -> dict:
         "generic": lambda: parse_generic(ws, sid, fid, name),
     }
     facts_out, examples_out = dispatch.get(t, dispatch["generic"])()
+    _log.info("  → %d fact(s), %d example(s)", len(facts_out), len(examples_out))
     return {
         "meta": {
             "source_type": "excel",
@@ -692,7 +684,8 @@ def main() -> None:
         sys.exit(1)
 
     fid, xlsx_path = sys.argv[1], sys.argv[2]
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    _log.info("Loading '%s'  (featureId=%s)", xlsx_path, fid)
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
 
     raw = xlsx_path.replace("\\", "/").split("/")[-1]
     stem = sanitize(raw[:-5] if raw.lower().endswith(".xlsx") else raw)
@@ -700,13 +693,12 @@ def main() -> None:
     results = [
         e
         for name in wb.sheetnames
-        if (ws := wb[name])
-        and ws.max_row
-        and ws.max_row > 0
+        if (ws := wb[name]) is not None
         and (e := process_sheet(ws, name, stem, fid))
         and (e["facts"] or e["examples"])
     ]
 
+    _log.info("Done: %d extraction(s) emitted to stdout", len(results))
     sys.stdout.buffer.write(
         json.dumps(results, ensure_ascii=False, indent=2).encode("utf-8")
     )

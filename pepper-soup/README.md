@@ -2,22 +2,46 @@
 
 ## Overview
 
-This pipeline generates feature documentation from existing source material like Confluence pages and Excel files. It parses the sources, extracts facts using an LLM or scripts, merges them into a single knowledge base, and generates two output docs: `user.md` and `developer.md`.
+This pipeline generates documentation from existing source material like Confluence pages, Excel files, and source code. It parses the sources, extracts facts using an LLM or scripts, merges them into a single knowledge base, and generates two output docs: `user.md` and `developer.md`.
 
 The pipeline runs as **6 sequential stages**. Each stage consumes the output of the previous one.
+
+---
+
+## Usage
+
+To run the pipeline, you can use the CLI and pass sources either via a `sources.json` configuration file.
+
+**Example `sources.json`:**
+
+```json
+{
+  "confluence": ["docs/confluence.md"],
+  "excel": ["docs/data.xlsx"],
+  "code": [
+    { "dir": "../banking-core/src/main/java/com/bank/capitalized_income" }
+  ]
+}
+```
+
+**Run Commands:**
+
+```bash
+bun run index.ts capitalized_income --sources ./sources.json
+```
 
 ---
 
 ## Pipeline Stages
 
 ```
-Confluence + Excel sources
+Confluence + Excel + Code sources
         │
         ▼
 1. Collect Sources        → copy raw content locally from different sources
         │
         ▼
-2. Normalise Sources       → clean and standardise content using LLM
+2. Normalise Sources       → clean and standardise content
         │
         ▼
 3. Extract Knowledge       → LLM or scripts extract facts/examples per source
@@ -29,14 +53,14 @@ Confluence + Excel sources
 5. Generate Documentation  → LLM writes user.md and developer.md by section
         │
         ▼
-6. Generate Review Report  → Open a github like PR for updating documentation
+6. Generate Review Report  → Generate local QA checklist
 ```
 
 ---
 
 ## Stage 1: Collect Sources
 
-**Purpose:** Copy source content (Confluence markdown, Excel workbooks) from their original locations locally.
+**Purpose:** Copy source content (Confluence markdown, Excel workbooks, and source code files) from their original locations locally.
 
 **Why:** Keeps sources for each feature isolated, avoids mutating originals, and gives every downstream stage a fixed input path.
 
@@ -45,13 +69,15 @@ Confluence + Excel sources
 - `featureId` (e.g. `capitalised_income`)
 - `sources.confluence` — array of file paths
 - `sources.excel` — array of file paths
+- `sources.code` — array of objects specifying `dir` and `include`/`exclude` patterns
 
 **Output:**
 
 ```
 sources/{featureId}/
 ├── confluence/*.md
-└── excel/*.xlsx
+├── excel/*.xlsx
+└── code/*
 ```
 
 **Skip:** `skipStages: [1]` — use if the folder is already populated.
@@ -90,6 +116,7 @@ normalised/{featureId}/
 
 **Markdown sources:** sent to the LLM with an extraction prompt; returns structured JSON.
 **Excel sources:** handled separately by a Python script (`extract_excel.py`) that parses tables/scenarios into the same schema.
+**Code sources:** sent to the LLM with a specific code extraction prompt. These code facts act as the **ground truth** to identify and fix missing, old, or conflicting information in the business documents.
 
 **Fact schema:**
 
@@ -137,11 +164,7 @@ normalised/{featureId}/
 
 **Why split by audience:** users and developers need different information — usage/workflow vs. implementation/config/data model.
 
-**Processing:** each doc is broken into sections; each section is generated independently (facts filtered by topic, relevant examples attached, sent to the LLM). Sections are then concatenated into the final file.
-
-**Developer sections:** System Overview, Setup, Configuration Reference, Core Workflows, Data Model, API Reference, Accounting/GL Entries, Edge Cases, Known Limitations.
-
-**User sections:** Overview, Key Concepts, Common Workflows, Example Scenarios, FAQ, Troubleshooting.
+**Processing:** each doc is broken into sections; each section is generated independently. The LLM is instructed to prioritize the narrative and tone of the human-written Business Doc Facts, but to use Implementation (Code) Facts as the ultimate source of truth to correct any conflicting or outdated information. Sections are then concatenated into the final file.
 
 **Output:**
 

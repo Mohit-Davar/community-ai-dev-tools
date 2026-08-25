@@ -5,15 +5,22 @@ import { normaliseConfluence } from "@/sources/confluence";
 import type { NormalisedDoc } from "@/types/index";
 
 export async function normaliseSources(
-  featureId: string
+  featureId: string,
+  onProgress?: (msg: string) => void
 ): Promise<NormalisedDoc[]> {
   const outDir = normalisedDir(featureId);
   const results: NormalisedDoc[] = [];
+  onProgress?.("Discovering Confluence source files...");
   const confluenceFiles = await listFiles(
     confluenceSourcesDir(featureId),
     ".md"
   );
-  for (const filePath of confluenceFiles) {
+  for (let i = 0; i < confluenceFiles.length; i++) {
+    const filePath = confluenceFiles[i]!;
+    const fileName = path.basename(filePath);
+    onProgress?.(
+      `Normalising Confluence document [${i + 1}/${confluenceFiles.length}]: ${fileName}...`
+    );
     try {
       const doc = await normaliseConfluence(filePath, featureId);
       const outName = `confluence__${path.basename(filePath, ".md")}.md`;

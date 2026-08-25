@@ -54,14 +54,41 @@ export async function listFiles(
 ): Promise<string[]> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
     return entries
       .filter(
-        (e) =>
-          e.isFile() &&
-          (ext === undefined ||
-            e.name.toLowerCase().endsWith(ext.toLowerCase()))
+        (entry) =>
+          entry.isFile() &&
+          (!ext || entry.name.toLowerCase().endsWith(ext.toLowerCase()))
       )
-      .map((e) => path.join(dirPath, e.name));
+      .map((entry) => path.join(dirPath, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+// Lists all files in a directory recursively with a given extension (optional).
+export async function listFilesRecursive(
+  dirPath: string,
+  ext?: string
+): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const files: string[] = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...(await listFilesRecursive(fullPath, ext)));
+        continue;
+      }
+      if (
+        entry.isFile() &&
+        (!ext || entry.name.toLowerCase().endsWith(ext.toLowerCase()))
+      ) {
+        files.push(fullPath);
+      }
+    }
+    return files;
   } catch {
     return [];
   }

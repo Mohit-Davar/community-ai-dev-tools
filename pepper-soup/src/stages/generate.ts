@@ -1,260 +1,456 @@
-/**
- * Generate Documentation
- *
- * Reads the merged FeatureKnowledgeBase and generates two documentation files:
- *   - developer.md
- *   - user.md
- *
- * Generation is section-by-section. Each section query filters only the
- * relevant facts from the KB, keeping prompts focused and quality high.
- */
-
 import path from "path";
+import { mdToPdf } from "md-to-pdf";
+import chalk from "chalk";
 import { zodResponseFormat } from "openai/helpers/zod";
+
 import { openai } from "@/llm/client";
-import { DocSectionSchema } from "@/llm/schemas";
-import { docSectionMessages } from "@/llm/prompts";
-import { OPENAI_MODEL } from "@/config/index";
-import { kbFilePath, docsDir } from "@/config/index";
+import { DocPageSchema } from "@/llm/schemas";
+import { docPageMessages, type PageSectionInput } from "@/llm/prompts";
+import {
+  OPENAI_MODEL,
+  kbFilePath,
+  gitbookDocsDir,
+  confluenceDocsDir,
+  pdfDocsDir,
+} from "@/config/index";
 import { readJson, writeText, ensureDir } from "@/utils/files";
 import type {
   FeatureKnowledgeBase,
   Fact,
-  Example,
   DocType,
   FactTopic,
+  PageGroup,
+  WrittenPage,
+  GeneratedDoc,
 } from "@/types/index";
-import pLimit from "p-limit";
-import chalk from "chalk";
 
-// Section Definitions
-// Section Definitions
-function getSections(
+// Returns only page groups that have relevant knowledge.
+function getPageGroups(
   kb: FeatureKnowledgeBase,
   docType: DocType
-): Array<{ title: string; topics: FactTopic[] }> {
-  const presentTopics = new Set(kb.facts.map((f) => f.topic));
-  const sections: Array<{ title: string; topics: FactTopic[] }> = [];
-
-  if (docType === "developer") {
-    // System Overview & Architecture
-    sections.push({
-      title: "System Overview & Architecture",
-      topics: ["concept", "terminology"],
-    });
-    // Getting Started & Setup
-    sections.push({
-      title: "Getting Started & Setup",
-      topics: ["concept", "other"],
-    });
-    // Configuration Reference
-    if (presentTopics.has("configuration")) {
-      sections.push({
-        title: "Configuration Reference",
-        topics: ["configuration"],
-      });
-    }
-    // Business Logic & Core Workflows
-    if (presentTopics.has("behavior")) {
-      sections.push({
-        title: "Business Logic & Core Workflows",
-        topics: ["behavior", "concept"],
-      });
-    }
-    // Data Model & Database Schema
-    if (presentTopics.has("database")) {
-      sections.push({
-        title: "Data Model & Database Schema",
-        topics: ["database"],
-      });
-    }
-    // API & Integration Reference
-    if (
-      presentTopics.has("api") ||
-      presentTopics.has("integration") ||
-      presentTopics.has("business_event")
-    ) {
-      sections.push({
-        title: "API & Integration Reference",
-        topics: ["api", "integration", "business_event"],
-      });
-    }
-    // Accounting & General Ledger Entries
-    if (presentTopics.has("accounting")) {
-      sections.push({
-        title: "Accounting & General Ledger Entries",
-        topics: ["accounting"],
-      });
-    }
-    // Edge Cases & Validation Constraints
-    if (presentTopics.has("edge_case") || presentTopics.has("constraint")) {
-      sections.push({
-        title: "Edge Cases & Validation Constraints",
-        topics: ["edge_case", "constraint"],
-      });
-    }
-    // Known Limitations & Technical Debt
-    if (presentTopics.has("open_question")) {
-      sections.push({
-        title: "Known Limitations & Technical Debt",
-        topics: ["open_question", "constraint"],
-      });
-    }
-    // Worked Scenarios
-    if (kb.examples && kb.examples.length > 0) {
-      sections.push({ title: "Worked Scenarios", topics: [] });
-    }
-  } else {
-    // Welcome & Feature Introduction
-    sections.push({
-      title: "Welcome & Feature Introduction",
-      topics: ["concept", "terminology"],
-    });
-    // Onboarding & Getting Started
-    sections.push({
-      title: "Onboarding & Getting Started",
-      topics: ["concept", "configuration"],
-    });
-    // Dashboard & Service Overview
-    sections.push({
-      title: "Dashboard & Service Overview",
-      topics: ["concept", "other"],
-    });
-    // Customer Guide
-    if (presentTopics.has("behavior") || presentTopics.has("api")) {
-      sections.push({
-        title: "Customer Guide",
-        topics: ["behavior", "api"],
-      });
-    }
-    // Operator Guide
-    if (presentTopics.has("behavior") || presentTopics.has("configuration")) {
-      sections.push({
-        title: "Operator Guide",
-        topics: ["behavior", "configuration"],
-      });
-    }
-    // Security & Fraud Prevention
-    sections.push({
-      title: "Security & Fraud Prevention",
-      topics: ["constraint", "edge_case"],
-    });
-    // Troubleshooting & FAQs
-    if (
-      presentTopics.has("open_question") ||
-      presentTopics.has("constraint") ||
-      presentTopics.has("edge_case")
-    ) {
-      sections.push({
-        title: "Troubleshooting & FAQs",
-        topics: ["open_question", "constraint", "edge_case"],
-      });
-    }
-    // Worked Scenarios
-    if (kb.examples && kb.examples.length > 0) {
-      sections.push({ title: "Worked Scenarios", topics: [] });
-    }
-  }
-  return sections;
+): PageGroup[] {
+  const topics = new Set(kb.facts.map((fact) => fact.topic));
+  const hasContent = (...factTopics: FactTopic[]) =>
+    factTopics.some((topic) => topics.has(topic));
+  const groups: PageGroup[] =
+    docType === "developer"
+      ? [
+          {
+            title: "Overview",
+            slug: "overview",
+            subDir: "setup",
+            sections: [
+              {
+                title: "Concepts",
+                topics: ["concept", "terminology", "other"],
+              },
+              {
+                title: "Logic",
+                topics: [
+                  "behavior",
+                  "accounting",
+                  "database",
+                  "business_event",
+                ],
+              },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "API Reference",
+            slug: "api-reference",
+            subDir: "reference",
+            sections: [
+              {
+                title: "API Reference",
+                topics: ["api", "integration", "configuration"],
+              },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "Troubleshooting",
+            slug: "troubleshooting",
+            subDir: "internals",
+            sections: [
+              {
+                title: "Troubleshooting",
+                topics: ["edge_case", "constraint"],
+              },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "Examples",
+            slug: "examples",
+            subDir: "examples",
+            sections: [{ title: "Examples", topics: [] }],
+            includeExamples: true,
+          },
+        ]
+      : [
+          {
+            title: "Introduction",
+            slug: "introduction",
+            subDir: "guides",
+            sections: [
+              {
+                title: "Introduction",
+                topics: ["concept", "terminology", "other"],
+              },
+              { title: "Concepts", topics: ["terminology", "concept"] },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "Getting Started",
+            slug: "getting-started",
+            subDir: "guides",
+            sections: [
+              {
+                title: "Getting Started",
+                topics: ["configuration", "behavior"],
+              },
+              {
+                title: "Usage",
+                topics: ["behavior", "api", "business_event"],
+              },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "Troubleshooting",
+            slug: "troubleshooting",
+            subDir: "guides",
+            sections: [
+              {
+                title: "Troubleshooting",
+                topics: ["edge_case", "constraint"],
+              },
+            ],
+            includeExamples: false,
+          },
+          {
+            title: "Examples",
+            slug: "examples",
+            subDir: "examples",
+            sections: [{ title: "Examples", topics: [] }],
+            includeExamples: true,
+          },
+        ];
+  return groups.filter(
+    (group) =>
+      (group.includeExamples && kb.examples.length > 0) ||
+      group.sections.some(
+        (section) => section.topics.length > 0 && hasContent(...section.topics)
+      )
+  );
 }
 
-// Fact Filtering
+// Removes unreliable facts before documentation generation.
 function filterFacts(kb: FeatureKnowledgeBase, topics: FactTopic[]): Fact[] {
-  if (topics.length === 0) return [];
-  return kb.facts.filter((f) => topics.includes(f.topic));
+  if (!topics.length) return [];
+  return kb.facts.filter(
+    (fact) =>
+      topics.includes(fact.topic) &&
+      fact.confidence !== "low" &&
+      fact.status !== "conflicting" &&
+      fact.topic !== "open_question"
+  );
 }
 
-// Section Generation
-async function generateSection(
-  title: string,
-  facts: Fact[],
-  examples: Example[],
-  docType: DocType
-): Promise<string> {
-  const messages = docSectionMessages(title, docType, facts, examples);
-  const completion = await openai.chat.completions.parse({
-    model: OPENAI_MODEL,
-    messages,
-    response_format: zodResponseFormat(DocSectionSchema, "doc_section"),
-  });
-  const parsed = completion.choices[0]?.message.parsed;
-  if (!parsed) {
-    throw new Error(`[generate] LLM returned null for section: ${title}`);
-  }
-  return `## ${title}\n\n${parsed.content}`;
-}
-
-// Document Assembly
-async function generateDoc(
+// Generates one documentation page using the LLM.
+async function generatePage(
+  group: PageGroup,
   kb: FeatureKnowledgeBase,
   docType: DocType,
   onProgress?: (msg: string) => void
 ): Promise<string> {
-  const sections = getSections(kb, docType);
-
-  const title =
-    docType === "developer"
-      ? `# ${kb.featureId} — Developer Documentation`
-      : `# ${kb.featureId} — User Guide`;
-
-  const preamble = [
-    title,
-    "",
-    `> Generated by Pepper Soup on ${new Date().toLocaleString()}`,
-    "",
-    "---",
-    "",
-  ].join("\n");
-
-  const limit = pLimit(3);
-  const promises = sections.map((section) =>
-    limit(async () => {
-      if (onProgress) {
-        onProgress(`Generating [${docType}] section: "${section.title}"...`);
-      }
-      const relevantFacts = filterFacts(kb, section.topics);
-      const relevantExamples =
-        section.title === "Worked Scenarios" ? kb.examples : [];
-      try {
-        return await generateSection(
-          section.title,
-          relevantFacts,
-          relevantExamples,
-          docType
-        );
-      } catch (err) {
-        console.error(
-          chalk.red.dim(
-            `[generate] Failed to generate section "${section.title}": ${err}`
-          )
-        );
-        return `## ${section.title}\n\n_Section generation failed. Please review manually._`;
-      }
+  const audience = docType === "developer" ? "Developer" : "User";
+  onProgress?.(`Generating ${audience} Page "${group.title}"...`);
+  const lastSection = group.sections.length - 1;
+  const sectionsInput: PageSectionInput[] = group.sections.map(
+    (section, index) => ({
+      title: section.title,
+      facts: filterFacts(kb, section.topics),
+      examples:
+        group.includeExamples && index === lastSection ? kb.examples : [],
     })
   );
-
-  const sectionContents = await Promise.all(promises);
-
-  return preamble + sectionContents.join("\n\n---\n\n");
+  try {
+    const completion = await openai.chat.completions.parse({
+      model: OPENAI_MODEL,
+      messages: docPageMessages(group.title, sectionsInput, docType),
+      response_format: zodResponseFormat(DocPageSchema, "doc_page"),
+    });
+    const parsed = completion.choices[0]?.message.parsed;
+    if (!parsed?.sections) {
+      throw new Error(`No valid content generated for "${group.title}"`);
+    }
+    return group.sections
+      .map((section) => {
+        const generated = parsed.sections.find(
+          (item) => item.title === section.title
+        );
+        return generated?.content
+          ? `## ${section.title}\n\n${generated.content}`
+          : `## ${section.title}\n\n_Section generation failed._`;
+      })
+      .join("\n\n---\n\n");
+  } catch (error) {
+    console.error(
+      chalk.red(
+        `[generate] Failed to generate "${group.title}": ${String(error)}`
+      )
+    );
+    return group.sections
+      .map(
+        (section) =>
+          `## ${section.title}\n\n_Page generation failed. Please review manually._`
+      )
+      .join("\n\n---\n\n");
+  }
 }
 
-// Stage Entry Point
-export async function generateDocs(
-  featureId: string,
+// Creates the GitBook page header.
+function gitbookPreamble(title: string): string {
+  return `# ${title}\n\n> Updated: ${new Date().toLocaleString()}\n\n---\n\n`;
+}
+
+// Creates the Confluence page header.
+function confluencePreamble(title: string, labels: string[]): string {
+  const labelLine = labels.length
+    ? `<!-- Labels: ${labels.join(", ")} -->\n`
+    : "";
+  return `${labelLine}# ${title}\n\n> Updated: ${new Date().toLocaleString()}\n\n---\n\n`;
+}
+
+const SUB_DIR_LABELS: Record<string, string> = {
+  setup: "Setup",
+  internals: "Internals",
+  reference: "Reference",
+  guides: "Guides",
+  examples: "Examples",
+};
+
+// Groups generated pages by output directory.
+function groupPagesBySubDir(pages: WrittenPage[]): Map<string, WrittenPage[]> {
+  const grouped = new Map<string, WrittenPage[]>();
+  for (const page of pages) {
+    const key = page.subDir || "";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(page);
+  }
+  return grouped;
+}
+
+// Generates all pages for one documentation type.
+async function generateDocContent(
+  kb: FeatureKnowledgeBase,
+  docType: DocType,
+  onProgress?: (msg: string) => void
+): Promise<GeneratedDoc> {
+  const groups = getPageGroups(kb, docType);
+  const overviewTitle = docType === "developer" ? "Overview" : "Introduction";
+  onProgress?.(
+    `Generating ${docType === "developer" ? "Developer" : "User"} overview...`
+  );
+  let overviewBody: string;
+  try {
+    const completion = await openai.chat.completions.parse({
+      model: OPENAI_MODEL,
+      messages: docPageMessages(
+        overviewTitle,
+        [
+          {
+            title: overviewTitle,
+            facts: filterFacts(kb, [
+              "concept",
+              "terminology",
+              "behavior",
+              "business_event",
+            ]),
+            examples: [],
+          },
+        ],
+        docType
+      ),
+      response_format: zodResponseFormat(DocPageSchema, "doc_page"),
+    });
+    overviewBody =
+      completion.choices[0]?.message.parsed?.sections?.[0]?.content ??
+      "_Overview generation failed._";
+  } catch (error) {
+    console.error(chalk.red(`[generate] Overview failed: ${String(error)}`));
+    overviewBody = "_Overview generation failed. Please review manually._";
+  }
+  const pages: GeneratedDoc["pages"] = [];
+  for (const group of groups) {
+    pages.push({
+      group,
+      body: await generatePage(group, kb, docType, onProgress),
+    });
+  }
+  return { overviewBody, pages };
+}
+
+// Writes GitBook Markdown files and SUMMARY.md.
+async function buildGitBookOutput(
+  kb: FeatureKnowledgeBase,
+  docType: DocType,
+  generatedDoc: GeneratedDoc,
+  outDir: string,
   onProgress?: (msg: string) => void
 ): Promise<void> {
-  const kbPath = kbFilePath(featureId);
-  const kb = await readJson<FeatureKnowledgeBase>(kbPath);
-  const outDir = docsDir(featureId);
+  onProgress?.(`Writing ${docType} GitBook files...`);
   await ensureDir(outDir);
+  const written: WrittenPage[] = [];
+  const title =
+    docType === "developer"
+      ? `${kb.featureId} — Developer Documentation`
+      : `${kb.featureId} — User Guide`;
+  await writeText(
+    path.join(outDir, "README.md"),
+    gitbookPreamble(title) + generatedDoc.overviewBody
+  );
+  for (const { group, body } of generatedDoc.pages) {
+    const pageDir = path.join(outDir, group.subDir);
+    await ensureDir(pageDir);
+    await writeText(
+      path.join(pageDir, `${group.slug}.md`),
+      gitbookPreamble(group.title) + body
+    );
+    written.push({
+      title: group.title,
+      subDir: group.subDir,
+      slug: group.slug,
+    });
+  }
+  const summary = ["# Summary", "", "* [Overview](README.md)", ""];
+  for (const [subDir, pages] of groupPagesBySubDir(written)) {
+    summary.push(`## ${SUB_DIR_LABELS[subDir] ?? subDir}`, "");
+    for (const page of pages) {
+      summary.push(`* [${page.title}](${subDir}/${page.slug}.md)`);
+    }
+    summary.push("");
+  }
+  await writeText(path.join(outDir, "SUMMARY.md"), summary.join("\n"));
+}
 
-  // Developer docs
-  const devDoc = await generateDoc(kb, "developer", onProgress);
-  const devPath = path.join(outDir, "developer.md");
-  await writeText(devPath, devDoc);
+// Writes Confluence-compatible Markdown files.
+async function buildConfluenceOutput(
+  kb: FeatureKnowledgeBase,
+  docType: DocType,
+  generatedDoc: GeneratedDoc,
+  outDir: string,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  onProgress?.(`Writing ${docType} Confluence files...`);
+  await ensureDir(outDir);
+  const written: WrittenPage[] = [];
+  for (const { group, body } of generatedDoc.pages) {
+    const pageDir = path.join(outDir, group.subDir);
+    await ensureDir(pageDir);
+    const labels = [
+      docType,
+      group.subDir,
+      ...new Set(
+        group.sections.flatMap((section) =>
+          section.topics.map((topic) => topic.replace("_", "-"))
+        )
+      ),
+    ];
+    await writeText(
+      path.join(pageDir, `${group.slug}.md`),
+      confluencePreamble(group.title, labels) + body
+    );
+    written.push({
+      title: group.title,
+      subDir: group.subDir,
+      slug: group.slug,
+    });
+  }
+  const title =
+    docType === "developer"
+      ? `${kb.featureId} — Developer Documentation`
+      : `${kb.featureId} — User Guide`;
+  const tree = ["## Page Tree", ""];
+  for (const [subDir, pages] of groupPagesBySubDir(written)) {
+    tree.push(`### ${SUB_DIR_LABELS[subDir] ?? subDir}`, "");
+    for (const page of pages) {
+      tree.push(`- [${page.title}](${subDir}/${page.slug}.md)`);
+    }
+    tree.push("");
+  }
+  await writeText(
+    path.join(outDir, "index.md"),
+    confluencePreamble(title, [docType, "index"]) +
+      generatedDoc.overviewBody +
+      "\n\n---\n\n" +
+      tree.join("\n")
+  );
+}
 
-  // User docs
-  const userDoc = await generateDoc(kb, "user", onProgress);
-  const userPath = path.join(outDir, "user.md");
-  await writeText(userPath, userDoc);
+// Combines all pages and converts them to PDF.
+async function buildPdfOutput(
+  kb: FeatureKnowledgeBase,
+  docType: DocType,
+  generatedDoc: GeneratedDoc,
+  outDir: string,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  onProgress?.(`Generating ${docType} PDF...`);
+  await ensureDir(outDir);
+  const title =
+    docType === "developer"
+      ? `${kb.featureId} — Developer Documentation`
+      : `${kb.featureId} — User Guide`;
+  const sections = generatedDoc.pages
+    .map(({ group, body }) => `## ${group.title}\n\n${body}`)
+    .join("\n\n---\n\n");
+  const markdown = `# ${title}\n\n${generatedDoc.overviewBody}\n\n---\n\n${sections}`;
+  const mdPath = path.join(outDir, `${docType}-combined.md`);
+  await writeText(mdPath, markdown);
+  try {
+    await mdToPdf(
+      { content: markdown },
+      { dest: path.join(outDir, `${docType}-documentation.pdf`) }
+    );
+  } catch (error) {
+    console.error(
+      chalk.red(`[generate] PDF generation failed: ${String(error)}`)
+    );
+  }
+}
+
+// Generates Developer and User documentation in all output formats.
+export async function generateDocs(
+  featureId: string,
+  onProgress?: (message: string) => void
+): Promise<void> {
+  const kb = await readJson<FeatureKnowledgeBase>(kbFilePath(featureId));
+  for (const docType of ["developer", "user"] as DocType[]) {
+    const generatedDoc = await generateDocContent(kb, docType, onProgress);
+    await buildGitBookOutput(
+      kb,
+      docType,
+      generatedDoc,
+      gitbookDocsDir(featureId, docType),
+      onProgress
+    );
+    await buildConfluenceOutput(
+      kb,
+      docType,
+      generatedDoc,
+      confluenceDocsDir(featureId, docType),
+      onProgress
+    );
+    await buildPdfOutput(
+      kb,
+      docType,
+      generatedDoc,
+      pdfDocsDir(featureId, docType),
+      onProgress
+    );
+  }
 }

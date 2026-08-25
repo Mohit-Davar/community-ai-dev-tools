@@ -1,0 +1,18 @@
+{
+  "confluence": ["./docs/confluence.md"],
+  "excel": ["./docs/excel.xlsx"],
+  "code": [
+    {
+      "dir": "./docs/fineract",
+      "include": ["**/*"],
+      "exclude": ["**/src/test/**", "**/src/docs/**"],
+      "search": ["/capitalized/i"]
+    },
+    {
+      "dir": "./docs/web-app",
+      "include": ["**/*"],
+      "exclude": ["**/src/assets/**", "**/models/**"],
+      "search": ["/capitalized/i"]
+    }
+  ]
+}

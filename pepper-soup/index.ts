@@ -1,114 +1,144 @@
-/**
- * Usage: bun run index.ts <featureId> [options]
- *
- * Options:
- *   --sources-dir <dir>    Directory containing source files (defaults to ./docs)
- *   --confluence <file>    Specific Confluence .md files to include
- *   --excel <file>         Specific Excel .xlsx files to include
- *   --skip <stages>        Comma-separated stage numbers to skip
- *
- * Examples:
- *   bun run index.ts capitalised_income --sources-dir ./docs
- *   bun run index.ts capitalised_income --confluence ./docs/MyPage.md --excel ./docs/Data.xlsx
- *   bun run index.ts capitalised_income --sources-dir ./docs --skip 1,2
- */
-
 import path from "path";
 import fs from "fs/promises";
 import chalk from "chalk";
+
 import { runPipeline } from "@/pipeline";
 import type { PipelineSourcesInput } from "@/types/index";
 
 function printUsage() {
   console.log(`
-  ${chalk.cyan.bold("Automated Documentation Pipeline")}
-  ${chalk.dim("----------------------------------------")}
-  ${chalk.bold("Usage:")}
-    bun run index.ts <featureId> [options]
-  ${chalk.bold("Options:")}
-    --sources-dir <dir>    Auto-discover .md and .xlsx files from a directory
-    --confluence <file>    Add a specific Confluence .md file
-    --excel <file>         Add a specific Excel .xlsx file
-    --skip <n,n,...>       Skip stage numbers (e.g. --skip 1,2)
-  ${chalk.bold("Examples:")}
-    bun run index.ts capitalised_income --sources-dir ./docs
-    bun run index.ts documentation_pipeline --confluence ./pages/plan.md --excel ./data/QnA.xlsx
-  `);
-}
+  ${chalk.cyan.bold("Documentation Generation Pipeline")}
+  ${chalk.dim("─".repeat(45))}
 
-async function discoverSourcesFromDir(
-  dir: string
-): Promise<PipelineSourcesInput> {
-  const absDir = path.resolve(dir);
-  let entries: string[] = [];
-  try {
-    const raw = await fs.readdir(absDir);
-    entries = raw.map((e) => path.join(absDir, e));
-  } catch {
-    console.error(chalk.red(`[cli] Cannot read sources directory: ${absDir}`));
-    process.exit(1);
-  }
-  const confluence = entries.filter((e) => e.toLowerCase().endsWith(".md"));
-  const excel = entries.filter((e) => e.toLowerCase().endsWith(".xlsx"));
-  return { confluence, excel };
+  ${chalk.bold("Usage:")}
+    bun run index.ts <featureId> --sources <file> [options]
+
+  ${chalk.bold("Required:")}
+    ${chalk.cyan("--sources <file>")}   Path to sources JSON configuration file
+
+  ${chalk.bold("Options:")}
+    ${chalk.cyan("--skip <stages>")}    Comma-separated list of stages to skip (e.g. 1,2)
+    ${chalk.cyan("--help, -h")}         Display this help message
+
+  ${chalk.bold("Examples:")}
+    bun run index.ts capitalised_income --sources ./sources.json
+    bun run index.ts capitalised_income --sources ./sources.json --skip 1,2
+  `);
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+  if (!args.length || args[0] === "--help" || args[0] === "-h") {
     printUsage();
-    process.exit(0);
+    return;
   }
+
   const featureId = args[0];
   if (!featureId || featureId.startsWith("--")) {
-    console.error(chalk.red("[cli] First argument must be the feature ID."));
+    console.error(chalk.red("[cli] Feature ID is required."));
     printUsage();
     process.exit(1);
   }
-  // Parse flags
-  const confluenceFiles: string[] = [];
-  const excelFiles: string[] = [];
-  let sourcesDir: string | null = null;
+
+  let sourcesFile: string | undefined;
   const skipStages: number[] = [];
+  // Parse command-line options.
   for (let i = 1; i < args.length; i++) {
-    const arg = args[i];
-    const nextArg = args[i + 1];
-    if (arg === "--sources-dir" && nextArg) {
-      sourcesDir = nextArg;
-      i++;
-    } else if (arg === "--confluence" && nextArg) {
-      confluenceFiles.push(path.resolve(nextArg));
-      i++;
-    } else if (arg === "--excel" && nextArg) {
-      excelFiles.push(path.resolve(nextArg));
-      i++;
-    } else if (arg === "--skip" && nextArg) {
-      const stages = nextArg.split(",").map((s) => parseInt(s.trim(), 10));
-      skipStages.push(...stages.filter((n) => !isNaN(n)));
-      i++;
+    const option = args[i];
+    if (!option) {
+      console.error(chalk.red("[cli] Invalid empty argument."));
+      process.exit(1);
+    }
+    if (!option.startsWith("--")) {
+      console.error(chalk.red(`[cli] Unknown argument: ${option}`));
+      printUsage();
+      process.exit(1);
+    }
+    if (option === "--help") {
+      printUsage();
+      return;
+    }
+    const value = args[i + 1];
+    switch (option) {
+      case "--sources":
+        if (!value || value.startsWith("--")) {
+          console.error(chalk.red(`[cli] Missing value for ${option}.`));
+          process.exit(1);
+        }
+        sourcesFile = path.resolve(value);
+        i++;
+        break;
+      case "--skip": {
+        if (!value || value.startsWith("--")) {
+          console.error(chalk.red(`[cli] Missing value for ${option}.`));
+          process.exit(1);
+        }
+        const stages = value
+          .split(",")
+          .map((stage) => stage.trim())
+          .filter((stage) => stage.length > 0)
+          .map(Number);
+        if (stages.some((stage) => !Number.isInteger(stage) || stage < 0)) {
+          console.error(chalk.red(`[cli] Invalid value for --skip: ${value}`));
+          process.exit(1);
+        }
+        skipStages.push(...stages);
+        i++;
+        break;
+      }
+      default:
+        console.error(chalk.red(`[cli] Unknown option: ${option}`));
+        printUsage();
+        process.exit(1);
     }
   }
-  // Build sources input
-  let sources: PipelineSourcesInput = {
-    confluence: confluenceFiles,
-    excel: excelFiles,
-  };
-  if (sourcesDir) {
-    const discovered = await discoverSourcesFromDir(sourcesDir);
-    sources = {
-      confluence: [...sources.confluence, ...discovered.confluence],
-      excel: [...sources.excel, ...discovered.excel],
-    };
-  }
-  if (sources.confluence.length === 0 && sources.excel.length === 0) {
-    console.error(chalk.red("[cli] No source files found."));
+
+  if (!sourcesFile) {
+    console.error(chalk.red("[cli] --sources <file> is required."));
     printUsage();
     process.exit(1);
   }
-  await runPipeline({ featureId, sources, skipStages });
+
+  let sources: PipelineSourcesInput;
+  try {
+    const content = await fs.readFile(sourcesFile, "utf-8");
+    const loaded = JSON.parse(content) as Partial<PipelineSourcesInput>;
+    const baseDir = path.dirname(sourcesFile);
+    sources = {
+      confluence: (loaded.confluence ?? []).map((file) =>
+        path.resolve(baseDir, file)
+      ),
+      excel: (loaded.excel ?? []).map((file) => path.resolve(baseDir, file)),
+      code: (loaded.code ?? []).map((source) => ({
+        ...source,
+        dir: path.resolve(baseDir, source.dir),
+      })),
+    };
+  } catch (error) {
+    console.error(
+      chalk.red(`[cli] Failed to load sources file: ${sourcesFile}`),
+      error
+    );
+    process.exit(1);
+  }
+
+  if (
+    !sources.confluence.length &&
+    !sources.excel.length &&
+    !sources.code.length
+  ) {
+    console.error(chalk.red("[cli] No source files found in sources.json."));
+    process.exit(1);
+  }
+
+  await runPipeline({
+    featureId,
+    sources,
+    skipStages,
+  });
 }
 
-main().catch((err) => {
-  console.error(chalk.red("\n[cli] Fatal error:"), err);
+main().catch((error) => {
+  console.error(chalk.red("\n[cli] Fatal error:"), error);
   process.exit(1);
 });
